@@ -1,0 +1,7 @@
+*p*ssw*d* filter=git-crypt diff=git-crypt
+*jwt* filter=git-crypt diff=git-crypt
+*.sec* filter=git-crypt diff=git-crypt
+*.key* filter=git-crypt diff=git-crypt
+secrets/** filter=git-crypt diff=git-crypt
+.gitattributes !filter !diff
+*.asc !filter !diff
