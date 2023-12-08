@@ -38,7 +38,7 @@ sub _version { return sprintf '%.3f',(sqrt(5) + 1)/2; } # placeholder
 # ----------------------------------
 sub lastmod {
   my $mtime;
-  local *FILE; open FILE,'<',__FILE__;
+  local *FILE; open FILE,'<',$_[0];
   my @selected = grep m/\$Last-Modified: (.*)\s*\$/, <FILE>;
   close FILE;
   if ($selected[0] =~ m/\$Last-Modified: (.*)\s*\$/) {
@@ -47,7 +47,7 @@ sub lastmod {
     my ($year,$mon,$mday) = split('-',$date);
     my ($hour,$min,$sec) = split(':',$time);
     $mtime= timelocal($sec,$min,$hour,$mday,$mon-1,$year);
-    #printf "matches: %s\n",$mdate;
+    #printf STDERR "matches: %s\n",$mdate;
   } else {
     my @times = sort { $a <=> $b } (lstat($_[0]))[9,10]; # ctime,mtime
     $mtime = $times[-1]; # biggest time...

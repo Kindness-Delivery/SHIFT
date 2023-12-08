@@ -23,7 +23,6 @@ push @EXPORT_OK, qw($inonce);
 
 use strict;
 use version qw(version);
-use encode qw(encode_mbase58 decode_basen);
 
 # The "use vars" and "$VERSION" statements seem to be required.
 use vars qw/$dbug $VERSION/;
@@ -35,12 +34,13 @@ $VERSION = &version(__FILE__) unless ($VERSION ne '0.00');
 
 printf STDERR "--- # %s: %s %s\n",__PACKAGE__,$VERSION,join', ',caller(0)||caller(1);
 # -----------------------------------------------------------------------
-our $inonce = unpack 'Q',&decode_basen('initial nonce',29);
+our $inonce = unpack 'Q',&decode_base32a('Initial nonce!');
 printf "inonce: %u\n",$inonce if $dbug;
 
 our $lcg = $inonce;
 
-import Log::Trace;
+use Log::Trace;
+#import Log::Trace;
 sub TRACE_HERE;
 sub TRACEF;
 sub TEACE;
@@ -56,13 +56,13 @@ sub get_nid { # Ex. my $nid = &get_nid($token);
  use encode qw(encode_base36);
  TRACE_HERE {Level=>8};
  my $sha2 = &khash('SHA256',$pk,@_);
- my $ns36 = &encode_base36($sha2);
+ my $ns36 = &encode_base36($sha2); # /!\ slow
  my $nid = lc substr($ns36,0,$len);
  if (wantarray) {
    use MIME::Base64 qw(encode_base64);
    my $ns64 = &encode_base64($sha2);
       $ns64 =~ tr,+/,,d;
-   my $shard = lc substr($ns64,0,$len);
+   my $shard = lc substr($ns64,0,$len); # b36-equivalant: lc(base64)
    my $sha16 = unpack('H*',$sha2);
    return ( nid => $nid, pku => $pk, sha => $sha16, shard => $shard );
  } else {
@@ -70,7 +70,8 @@ sub get_nid { # Ex. my $nid = &get_nid($token);
  }
 }
 # -----------------------------------------------------------------------
-sub get_shard {
+sub get_shard { # Ex. my $shard = &get_shard($pku);
+ #y $itent = "get a simple alphanumeric shard";
  my $len = ($#_ > 0) ? pop : 3;
  my $name = join'',@_;
  #$name =~ tr/a-zA-Z0-9/./cs;
@@ -79,21 +80,47 @@ sub get_shard {
 }
 # -----------------------------------------------------------------------
 sub get_shard16 {
+ #y $itent = "get hexadecimal shard";
  my $len = ($#_ > 0) ? pop : 16;
  my $hash = &khash('SHA256',@_);
  my $shard = unpack"H$len",$hash;
  return $shard;
 }
 # -----------------------------------------------------------------------
+sub get_shard36 {
+ use MIME::Base64 qw(encode_base64);
+ my $len = ($#_ > 0) ? pop : 13;
+ my $hash = &khash('SHA256',@_);
+ my $ns64 = encode_base64($hash,'');
+    $ns64 =~ tr,+/,,d;
+ my $shard = lc substr($ns64,0,$len); # b36-equivalant: lc(base64)
+ return $shard;
+}
+# -----------------------------------------------------------------------
 sub lcg { # x = (a * x + c ) % m;
-   #y $m = (1<<31)-1); # prime
+   #y $m = (1<<31)-1); # prime 2147483647
    #y $a = int($phi * (1<<32));
-   $lcg =  ($lcg * 2654435769 ) % 2147483647;
+   # a = 2654435769 = 3 × 7 × 23 × 89 × 683
+   # largest 32b prime: 4294967291
+   # prime before 10B : 9999999967
+   return $lcg = ($lcg * 2654435769 ) % 4294967291;
+
+   # primes:
+   # (1<<61)-1 = 2305843009213693951
+   #             2305843009213693921
+   # (sqrt(5) + 1) * 2^62
+   #$lcg = ($lcg * 14923729446516375050 ) % 18446744073709551557
+   # largest 64b prime: 18446744073709551557
 }
 sub lfsr32 {
     our $lfsr = shift if @_;
     # taps: 32 31 29 1; feedback polynomial: x^32 + x^31 + x^29 + x + 1
     $lfsr = ($lfsr >> 1) ^ (-(int($lfsr) & 1) & 0xD0000001);
+}
+sub lfsr56 {
+    our $lfsr = shift if @_;
+    $lfsr = ($lfsr >> 1) ^ (-(int($lfsr) & 1) & 0x80000000600003);
+
 }
 # -----------------------------------------------------------------------
 sub get_uid { # Ex. my $uid = &get_uid($name,$salt);
@@ -121,32 +148,18 @@ sub get_uid { # Ex. my $uid = &get_uid($name,$salt);
  }
  return lc $uid;
 }
-# -----------------------------------------------------------------------
-sub getUserID { # Ex. my $userid = &getUserID($name,$pku);
-   # similar to get_uid + guarantee of no collision
-   use encode qw(decode_mbase58);
-   our $map;
-   my $pku = pop;
-   my $shard = get_shard($pku);
-   my $np = scalar(keys%$map);
-   my $p = int((log($np)+log(35))/log(36));
-   use Digest::SHA qw(sha1_hex);
-   my $h = sha1_base64(@_,decode_mbase58($pku));
-   my $h0 = lc$h; $h0 =~ y,+/,,d;
-   #my $h0 = $h; $h0 =~ y/0//d;
-   my $po = $p;
-   my $s = substr($h0,-$po);
-   while (exists $map->{$s}) {
-      return $s if $map->{$s} eq $h;
-      $po++;
-      $s = substr($h0,-$po);
-      if ($po > $p) {
-         $p = $po;
-         printf "%s: /home/%s -> /bpe/%s/%s # %uc\n",$_[0],$s,$shard,$pku,$p;
-      }
-   }
-   $map->{$s} = $h;
-   return $s;
+
+# ---------------------------------------
+sub gettics { # my $ticns = &gettics();
+  #y $intent = "get high resolution time in second since epoch";
+  use Time::HiRes qw( clock_gettime CLOCK_REALTIME);
+  # Read the POSIX high resolution timer.
+  my $highres = clock_gettime(CLOCK_REALTIME);
+  #y $tics = clock_gettime(&Time::HiRes::CLOCK_MONOTONIC);
+
+  my $caller = (caller(1))[3]; $caller =~ s/.*:://;
+  TRACEF "%s.tics: %s\n",$caller,($0 =~ m/\.t$/) ? 1634239703.881 : $highres;
+  return int(($highres + 0.49999) * 1000_000_000);
 }
 # -----------------------------------------------------------------------
 sub get_salt { # Ex. my $salt = & get_salt($uid);
@@ -167,6 +180,13 @@ sub get_username { # Ex. my $username = &get_username($name);
   #printf "debug.names: %s\n",join(',',@names);
   my $user = lc( (@names) ? sprintf('%s%s',$fn,substr($names[-1],0,1)) : $fn );
   return $user;
+}
+# -----------------------------------------------------------------------
+sub get_spotid {
+   my ($ts,$ip) = (shift,shift);
+   my $spot = pack('N',$ts).pack'C4',split('\.',$ip);
+   my $qspot = unpack'Q',$spot;
+   return $qspot;
 }
 # -----------------------------------------------------------------------
 sub getuuid {
@@ -276,28 +296,44 @@ sub keyw { # get a keyword from a hash (using 8 Bytes)
   return $kw;
 }
 # -----------------------------------------------------------------------
+sub decode_base32a {
+  use MIME::Base32 qw();
+  my $s = shift;
+     $s =~ tr [01v2_\-+/', :.!&$*%] [OIVZUMPSQCSCDXNSxP];
+     $s =~ y/ybndrfg8ejkmcpqxotluwisza345h769/A-Z2-7/;
+  return &MIME::Base32::decode_base32($s);
+}
+# -----------------------------------------------------------------------
 # max word: pabokyrulafivacanud QmVMDSybz4hQnEvxc5PrKqNS7osvLHADgifaZ3PXcJh9PF
 sub word { # 20^4 * 6^3 + 20^3*6^4 words (25.4bit worth of data ...)
   use Math::Int64 qw(uint64);
   my $n = uint64($_[0]);
   my $vo = [qw ( a e i o u y )]; # 6
-  my $cs = [qw ( b c d f g h j k l m n p q r s t v w x z )]; # 20
+  my $sc = [qw ( b mb mp c cc ch d f g gh h j k l ll m n nc nd ng nk ns nt nx p ph pp q r s sh t st v w x z )]; # 20
+  my $mc = [qw ( h bl br ck cl cr chr dr ff fl fr gr jr kr kl mm mn mw nn nf nj nl nq nr nv nw nz pl pr qr sl sr shr tr th thr vl vr wr zr )]; # 20
+  my $cs = [@$sc,@$mc];
+  my $nc = scalar(@$cs);
+  my $nm = scalar(@$mc);
+  my $ne = scalar(@$sc);
+
   my $str = '';
-  $str = chr(ord('a') +$n%26);
-  $n /= 26;
-  my $vnc = ($str =~ /[aeiouy]/) ? 1 : 0;
+  if ($n < 2) {
+    return $n ? 'b' : 'a';
+  }
+  my $cnv = ($n % 2) ? 1 : 0;
+  $n /= 2;
   while ($n > 0) {
-    if ($vnc) {
-      my $c = $n % 20;
-      $n /= 20;
+    if ($cnv) {
+      my $c = $n % $nc;
+      $n /= $nc;
       $str .= $cs->[$c];
-      $vnc = 0;
+      $cnv = 0;
       #print "cs: $n -> $c -> $str\n";
     } else {
       my $c = $n % 6;
       $n /= 6;
       $str .= $vo->[$c];
-      $vnc = 1;
+      $cnv = 1;
       #print "vo: $n -> $c -> $str\n";
     }
   }
@@ -336,6 +372,17 @@ sub nl {
   $buf =~ s/\\n/\n/g;
   $buf =~ s/{55799-ds}/\\n/g;
   return $buf;
+}
+# -----------------------------------------------------------------------
+sub args { # Ex. my ($addr,$pku,$seed,$auth) = &args([qw(addr pku seed auth)],@_);
+   return @_ if (ref($_[0]) ne 'ARRAY');
+   $pargs = shift;
+   my $arg = { @_ };
+   my $args = [];
+   foreach my $p (@$pargs) {
+     push @$args, $arg->{$p} 
+   }
+   return wantarray ? (@$args,$args) : $args;
 }
 # -----------------------------------------------------------------------
 sub binarify {
@@ -394,10 +441,30 @@ sub objectify {
   }
 }
 # -----------------------------------------------------------------------
+sub deobjectify {
+  my $addr = shift;
+  my $object = shift;
+  if (ref($object) ne '') {
+     my $ext = substr($addr,rindex($addr,'.')+1);
+     if ($ext eq 'json') {
+        use misc qw(jsonify);
+        $data = jsonify($object);
+     } else {
+        use YAML::XS qw(Dump);
+        local $YAML::XS::QuoteNumericStrings = 0;
+        $data = Dump($object);
+        $data =~ s/^---/--- # $addr/;
+     }
+  } else {
+     $data = $object;
+  }
+  return $data;
+}
+# -----------------------------------------------------------------------
 sub khash { # keyed hash
    use Crypt::Digest qw();
-   my $alg = shift;
-   my $data = join'',@_;
+   my $alg = shift || 'SHA256';
+   my $data = join'',@_; delete $_[0];
    my $msg = Crypt::Digest->new($alg) or die $!;
       $msg->add($data);
    my $hash = $msg->digest();
@@ -410,7 +477,7 @@ sub khmac($$@) { # Ex. my $kmac = &khmac($algo,$secret,$nonce,$message);
   my $algo = shift;
   my $secret = shift;
   #printf "khmac.secret: f%s\n",unpack'H*',$secret;
-  my $digest = Crypt::Mac::HMAC->new($algo,$secret);
+  my $digest = Crypt::Mac::HMAC->new($algo,$secret); undef $secret;
      $digest->add(join'',@_);
   return $digest->mac;
 }
@@ -437,4 +504,5 @@ sub get_url {
    return $content;
 }
 # -----------------------------------------------------------------------
-1;
+# $! echo "1; \# \$Source: /ipfs/$(ipfs add -n -w % -Q)/%:t \$"
+1; # $Source: /ipfs/QmVGSs9yREarAoVEYjn295XSTvrET8pepUDpKdUdsM7Qsc/misc.pm $
