@@ -4,10 +4,13 @@
 # Intent:
 #  re-usable routines ...
 #
+# $Last-Modified: Tue, 2023-12-26 10:28:47 $
+# .-1! echo "\# \$Last-Modified: $(date +'\%a, \%Y-\%m-\%d \%T') \$"
+#
 # Note:
 #   This work has been done during my own time at Doctor I·T
 # 
-# -- Copyright drit, 2021 --
+# -- Copyright radiant, 2021,2022,2023 --
 #BEGIN { if (-e $ENV{SITE}.'/lib') { use lib $ENV{SITE}.'/lib'; } }
 #
 package misc;
@@ -23,6 +26,7 @@ push @EXPORT_OK, qw($inonce);
 
 use strict;
 use version qw(version);
+use LOG qw(INFO TRACEF);
 
 # The "use vars" and "$VERSION" statements seem to be required.
 use vars qw/$dbug $VERSION/;
@@ -32,19 +36,21 @@ my ($State) = q$State: Exp $ =~ /: (\w+)/; our $dbug = ($State eq 'dbug')?1:0;
 # ----------------------------------------------------
 $VERSION = &version(__FILE__) unless ($VERSION ne '0.00');
 
-printf STDERR "--- # %s: %s %s\n",__PACKAGE__,$VERSION,join', ',caller(0)||caller(1);
+INFO "--- # %s: %s %s\n",__PACKAGE__,$VERSION,join', ',caller(0)||caller(1);
 # -----------------------------------------------------------------------
 our $inonce = unpack 'Q',&decode_base32a('Initial nonce!');
 printf "inonce: %u\n",$inonce if $dbug;
 
 our $lcg = $inonce;
 
-use Log::Trace;
+#use Log::Trace;
 #import Log::Trace;
+# stubs:
 sub TRACE_HERE;
-sub TRACEF;
-sub TEACE;
+sub TRACE;
 
+
+sub debug {};
 # -----------------------------------------------------------------------
 # namespace id: 13 char of base36(sha256)
 # 13 is chosen to garantie uniqness
@@ -143,8 +149,7 @@ sub get_uid { # Ex. my $uid = &get_uid($name,$salt);
     $uid = &encode_base36($salt.substr($sha2,-9,8));
  } else {
     use MIME::Base64 qw(encode_base64);
-    $uid = &encode_base64($salt.substr($sha2,-9,8),'');
-    $uid =~ tr,+/,,d;
+    $uid = &encode_base64($salt.substr($sha2,-9,8),'') =~ tr,+/,,dr;
  }
  return lc $uid;
 }
@@ -157,7 +162,7 @@ sub gettics { # my $ticns = &gettics();
   my $highres = clock_gettime(CLOCK_REALTIME);
   #y $tics = clock_gettime(&Time::HiRes::CLOCK_MONOTONIC);
 
-  my $caller = (caller(1))[3]; $caller =~ s/.*:://;
+  my $caller = (caller(1))[3] =~ s/.*:://r;
   TRACEF "%s.tics: %s\n",$caller,($0 =~ m/\.t$/) ? 1634239703.881 : $highres;
   return int(($highres + 0.49999) * 1000_000_000);
 }
@@ -171,9 +176,8 @@ sub get_salt { # Ex. my $salt = & get_salt($uid);
 # -----------------------------------------------------------------------
 sub get_username { # Ex. my $username = &get_username($name);
   #y $intent = "extract username from name";
-  my $name = shift;
+  my $name = shift =~ tr /a-zA-Z0-9/ /csr;
   return undef unless $name;
-  $name =~ tr /a-zA-Z0-9/ /cs;
   my ($fn,@names) = split(/ +/,$name);
   #printf "debug.name: %s\n",$name;
   #printf "debug.fn: %s\n",$fn;
@@ -249,8 +253,7 @@ sub _getv4uuid {
   $raw |= pack("H*", "00000000000040000000000000000000");
   $raw &= pack("H*", "FFFFFFFFFFFFFFFF3FFFFFFFFFFFFFFF"); # 0x3 == 0011b
   $raw |= pack("H*", "00000000000000008000000000000000"); # 0x8 == 1000b
-  my $hex = unpack("H*", $raw);
-  $hex =~ s/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/$1-$2-$3-$4-$5/;
+  my $hex = unpack("H*", $raw) =~ s/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/$1-$2-$3-$4-$5/r;
   return $hex;
 }
 # -----------------------------------------------------------------------
@@ -298,8 +301,7 @@ sub keyw { # get a keyword from a hash (using 8 Bytes)
 # -----------------------------------------------------------------------
 sub decode_base32a {
   use MIME::Base32 qw();
-  my $s = shift;
-     $s =~ tr [01v2_\-+/', :.!&$*%] [OIVZUMPSQCSCDXNSxP];
+  my $s = shift =~ tr [01v2_\-+/', :.!&$*%] [OIVZUMPSQCSCDXNSxP]r;
      $s =~ y/ybndrfg8ejkmcpqxotluwisza345h769/A-Z2-7/;
   return &MIME::Base32::decode_base32($s);
 }
@@ -376,10 +378,10 @@ sub nl {
 # -----------------------------------------------------------------------
 sub args { # Ex. my ($addr,$pku,$seed,$auth) = &args([qw(addr pku seed auth)],@_);
    return @_ if (ref($_[0]) ne 'ARRAY');
-   $pargs = shift;
+   my $list = shift;
    my $arg = { @_ };
    my $args = [];
-   foreach my $p (@$pargs) {
+   foreach my $p (@$list) {
      push @$args, $arg->{$p} 
    }
    return wantarray ? (@$args,$args) : $args;
@@ -442,12 +444,13 @@ sub objectify {
 }
 # -----------------------------------------------------------------------
 sub deobjectify {
+  my $data;
   my $addr = shift;
   my $object = shift;
   if (ref($object) ne '') {
      my $ext = substr($addr,rindex($addr,'.')+1);
      if ($ext eq 'json') {
-        use misc qw(jsonify);
+        #use misc qw(jsonify);
         $data = jsonify($object);
      } else {
         use YAML::XS qw(Dump);
@@ -459,6 +462,24 @@ sub deobjectify {
      $data = $object;
   }
   return $data;
+}
+# -----------------------------------------------------------------------
+sub nonce {
+   our $nonce;
+   return $nonce if $nonce;
+
+   my $uuid = pack 'H*', shift||'11453ec5-9964-4d28-86d6-33f5f6559456' =~ tr/0-9a-f//dcr;
+   debug "uuid: f%s\n",unpack'H*',$uuid;
+   my $noncef = $ENV{NONCE_FILE} || $ENV{RADIANT}.'/etc/nonce.yml';
+   if (-e $noncef) {
+      my $db = LoadFile($noncef);
+      $nonce = pack'H*', lc$db->{nonce} =~ tr/0-9a-f//dcr;
+   } else {
+      $nonce = &decode_base32a($ENV{NONCE});
+   }
+   debug "nonce: f%s",unpack'H*',$nonce;
+   $nonce = $uuid ^ $nonce;
+   return $nonce
 }
 # -----------------------------------------------------------------------
 sub khash { # keyed hash
@@ -478,7 +499,7 @@ sub khmac($$@) { # Ex. my $kmac = &khmac($algo,$secret,$nonce,$message);
   my $secret = shift;
   #printf "khmac.secret: f%s\n",unpack'H*',$secret;
   my $digest = Crypt::Mac::HMAC->new($algo,$secret); undef $secret;
-     $digest->add(join'',@_);
+     $digest->add(@_);
   return $digest->mac;
 }
 # -----------------------------------------------------------------------

@@ -41,6 +41,13 @@ exit $?;
 
 }
 
+sub import {
+    my $caller = caller;
+    no strict 'refs';
+    *{$caller . '::a'} = \&a;
+}
+
+
 # vim: syntax=perl
 # $! echo "1; \# \$Source: /ipfs/$(ipfs add -w % -Q)/%:t \$"
 1; # $Source: /ipfs/QmYj4FdAh5DfXdu7pnHaWjkFHwxTVTX4i5CTyuVVYo3Qkd/a.pm $
