@@ -26,7 +26,8 @@ push @EXPORT_OK, qw($inonce);
 
 use strict;
 use version qw(version);
-use LOG qw(INFO TRACEF);
+use IDE qw(INFO);
+#sub INFO($@) {};
 
 # The "use vars" and "$VERSION" statements seem to be required.
 use vars qw/$dbug $VERSION/;
@@ -36,7 +37,7 @@ my ($State) = q$State: Exp $ =~ /: (\w+)/; our $dbug = ($State eq 'dbug')?1:0;
 # ----------------------------------------------------
 $VERSION = &version(__FILE__) unless ($VERSION ne '0.00');
 
-INFO "--- # %s: %s %s\n",__PACKAGE__,$VERSION,join', ',caller(0)||caller(1);
+INFO "--- # %s: %s %s",__PACKAGE__,$VERSION,join', ',caller(0)||caller(1);
 # -----------------------------------------------------------------------
 our $inonce = unpack 'Q',&decode_base32a('Initial nonce!');
 printf "inonce: %u\n",$inonce if $dbug;
@@ -46,7 +47,8 @@ our $lcg = $inonce;
 #use Log::Trace;
 #import Log::Trace;
 # stubs:
-sub TRACE_HERE;
+sub TRACE_HERE {};
+sub TRACEF {};
 sub TRACE;
 
 
@@ -186,7 +188,7 @@ sub get_username { # Ex. my $username = &get_username($name);
   return $user;
 }
 # -----------------------------------------------------------------------
-sub get_spotid {
+sub get_spotid { #Q = T+S format
    my ($ts,$ip) = (shift,shift);
    my $spot = pack('N',$ts).pack'C4',split('\.',$ip);
    my $qspot = unpack'Q',$spot;
@@ -301,7 +303,10 @@ sub keyw { # get a keyword from a hash (using 8 Bytes)
 # -----------------------------------------------------------------------
 sub decode_base32a {
   use MIME::Base32 qw();
-  my $s = shift =~ tr [01v2_\-+/', :.!&$*%] [OIVZUMPSQCSCDXNSxP]r;
+  if ($_[0] =~ m/0-9a-f/)  { # make an exception for uuids 
+     return pack'H*',$_[0] =~ y/-//dr;
+  }
+  my $s = shift =~ tr [01v2_\-+/', :.!&$*%] [OIV4UMPSQCSCDXNSxP]r;
      $s =~ y/ybndrfg8ejkmcpqxotluwisza345h769/A-Z2-7/;
   return &MIME::Base32::decode_base32($s);
 }
@@ -312,7 +317,7 @@ sub word { # 20^4 * 6^3 + 20^3*6^4 words (25.4bit worth of data ...)
   my $n = uint64($_[0]);
   my $vo = [qw ( a e i o u y )]; # 6
   my $sc = [qw ( b mb mp c cc ch d f g gh h j k l ll m n nc nd ng nk ns nt nx p ph pp q r s sh t st v w x z )]; # 20
-  my $mc = [qw ( h bl br ck cl cr chr dr ff fl fr gr jr kr kl mm mn mw nn nf nj nl nq nr nv nw nz pl pr qr sl sr shr tr th thr vl vr wr zr )]; # 20
+  my $mc = [qw ( h bl br ck cl cr chr dr ff fl fr gr jr kr kl mm mn mw nn nf nj nl nq nr nv nw nz pl pr qr sl sr shr tr th thr vl vr wl wr zl zr zh )]; # 20
   my $cs = [@$sc,@$mc];
   my $nc = scalar(@$cs);
   my $nm = scalar(@$mc);
@@ -344,9 +349,9 @@ sub word { # 20^4 * 6^3 + 20^3*6^4 words (25.4bit worth of data ...)
 # -----------------------------------------------------------------------
 sub canon {
   my $word = shift;
-  my @word = split'',$word;
+  my @letters = split'',$word;
   sub randomly { my $r = rand(1); $r<0.5 ? -1 : $r>0.5 ? 1 : 0; }
-  my $canon = join'',$word[0],( sort randomly @word[1 .. $#word-1]),$word[-1];
+  my $canon = join'',$letters[0],( sort randomly @letters[1 .. $#letters-1]),$letters[-1];
   return $canon;
 }
 # -----------------------------------------------------------------------
@@ -377,14 +382,15 @@ sub nl {
 }
 # -----------------------------------------------------------------------
 sub args { # Ex. my ($addr,$pku,$seed,$auth) = &args([qw(addr pku seed auth)],@_);
+   #y $intent = 'returned in order args from hash list';
    return @_ if (ref($_[0]) ne 'ARRAY');
    my $list = shift;
-   my $arg = { @_ };
    my $args = [];
-   foreach my $p (@$list) {
-     push @$args, $arg->{$p} 
+   my $arg = $#_ % 2 ? { @_ } : { 1 => @_ };
+   foreach (@$list) {
+     push @$args, (exists $arg->{$_})? $arg->{$_} : shift ; 
    }
-   return wantarray ? (@$args,$args) : $args;
+   return wantarray ? (@$args,$arg) : $args;
 }
 # -----------------------------------------------------------------------
 sub binarify {
@@ -480,6 +486,15 @@ sub nonce {
    debug "nonce: f%s",unpack'H*',$nonce;
    $nonce = $uuid ^ $nonce;
    return $nonce
+}
+# -----------------------------------------------------------------------
+sub sha1 {
+   use Digest::SHA1 qw();
+   my $data = Encode::encode('UTF-8', join'',@_); delete $_[0];
+   my $msg = Digest::SHA1->new() or die $!;
+      $msg->add($data);
+   my $digest = $msg->hexdigest();
+   return $digest;
 }
 # -----------------------------------------------------------------------
 sub khash { # keyed hash
