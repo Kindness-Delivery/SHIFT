@@ -25,6 +25,8 @@ use YAML::XS qw();
 use essential qw(version);
 
 #use NOLOG qw($LOG debug);
+sub intent {};
+sub returning {};
 #use profiler qw(intent returning);
 use api qw(getParams getEnv);
 
@@ -58,7 +60,7 @@ sub get_spot { # Ex. my $spot = &get_spot($ip,$tics);
 
 
 sub getspot { # my $spot = &getspot($env);
-  #intent "get current physical location in space-time"; 
+  intent "get current physical location in space-time"; 
   use Time::HiRes qw(time clock_gettime clock_getres CLOCK_MONOTONIC);
   use api qw(getQueryParams);
   my $params = &getQueryParams();
@@ -85,7 +87,7 @@ sub getspot { # my $spot = &getspot($env);
   my $hash = sprintf "f%s#%x",unpack('H*',$md5),$salt;
   if ($pubip eq '0.0.0.0') {
     my $json = { error => '410 public ip unknown', usage => 'getspot.html' };
-    returning;
+    #returning;
     return wantarray ? (1,$json) : $json;  
   } else {
     my $json = {
@@ -104,7 +106,7 @@ sub getspot { # my $spot = &getspot($env);
       geoloc => 'by doctor-it',
       status => '200 OK'
     };
-    returning;
+    #returning;
     return wantarray ? (0,$json) : $json;  
   }
 
@@ -130,7 +132,7 @@ sub getnip { # my $nip = &getnip();
   DEBUG "dotip: %s",$dotip;
   my $nip = unpack'N',pack'C4',split('\.',$dotip);
   DEBUG "nip: %08x",$nip;
-  returning;
+  #returning;
   return $nip;
 }
 
@@ -248,7 +250,7 @@ sub getCountry($) {
     my $c = substr($ipdb,($n-1)*6,6);
     DEBUG "c: %s, %s",unpack'H8a2',$c;
     my ($a,$c) = unpack'Na2',$c;
-    returning;
+    #returning;
     return wantarray ? ($a,$c) : $c;
 }
 
@@ -269,7 +271,7 @@ sub getCity { # Ex. my $city = &getCity($nip);
   };
 
   my $city = $map->{$hash} || 'Ecublens, CH';
-  returning;
+  #returning;
   return $city;
 }
 
