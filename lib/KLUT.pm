@@ -14,8 +14,9 @@ use env;
 use YAML::XS qw(Dump);
 
 no warnings 'redefine';
+sub SECURE{};
 sub DEBUG{};
-use IDE; our$skip = [93,90,100,111];
+use IDE; our$skip = [41,54..67,72,93,90,100,111];
 
 my $tk509 = encode_base32e(substr(KH(decode_uuid('3f275e4a-be5f-4de3-bf59-c3cbb9be6458'),'shard','/509'),12,16)) // '08F6RHYKIB4S7SQVBQ0T4BN66X';
 
@@ -31,37 +32,44 @@ if (! defined $klut) {
 }
 
 
-sub KLUT { # Ex. my $access = KLUT($seedk,$ns,$addr,[secret]);
+sub KLUT { # Ex. my $access = KLUT($seedk,$addr,[secret]);
    # y $intent = "provide a secure distribute key-value store"
+   use kanony;
    use XKH qw(KH XOR);
-   DEBUG "klut.seedk16: %s",unpack('H*',$_[0]);
-   my $seedk = encode_base64(shift || decode_uuid('551162a7-e18c-41a5-8308-e59199baa738'));
-   DEBUG "klut.seedk64: %s",$seedk;
-      $seedk = &ENV(KLUT_ENCRYPTION_SEED => $seedk, 1686283);
-   DEBUG "seedk58: %s",$seedk;
-      $seedk_raw = decode_mbase($seedk);
-   DEBUG "seedk16: %s",encode_uuid($seedk_raw);
-   my ($ns,$addr) = (shift,shift);
+   DEBUG "klut.args: %s",join', ',map { substr(unpack('H*',$_),0,5); } @_;
+   my $seedk = shift || decode_uuid('551162a7-e18c-41a5-8308-e59199baa738');
+   DEBUG "klut.seedk64: %s",encode_base64($seedk);
+   my $seedk64 = encode_base64($seedk);
+      $seedk58 = &ENV(KLUT_ENCRYPTION_SEED => $seedk64, 1686283);
+      $seedk = decode_mbase($seedk58);
+   # DEBUG "seedk58: %s # %s %s  %s",$seedk58,kaname($seedk);
+   # DEBUG "seedk16: %s",encode_uuid(decode_mbase58($seedk58));
+   my $addr = shift;
+
    my $cipher = decode_uuid('12e510c6-0b43-41a3-b3fd-af9bda91c7e3');
-   my $key = KH($seedk_raw,'klut',$ns,$addr);
-   my $hash = KH($seedk_raw,'token',$ns,$addr);
+   my $key = KH($seedk,'klut',$addr); # KLUT encryption key
+   SECURE "klut.key: %s",$key;
+   my $hash = KH($seedk,'token',$addr); # KLUT record location hash
    my $shard = unpack'H5',substr($hash,-4,3);
    DEBUG "klut.hash: %s # %s",encode_base64($hash),$shard;
    $klut->{$shard} = loadKLUT($shard) if (! exists $klut->{$shard});
-   my $token = encode_base32e(substr($hash,12,16));
+   my $token = encode_base32e(substr($hash,12,16)); # hash supposed to be 32B
    DEBUG "klut.shard %s",$shard;
    DEBUG "klut.token: %s",$token;
    
    if (@_)  { # write
+      use pwned qw(pwname);
       my $access = pop || decode_uuid('880e71f9-ab24-4ade-b4e4-53314999c92d');
       $cipher = encode_uuid( XOR($access,$key) );
       $klut->{$shard}{$token} = $cipher;
-      DEBUG "klut.ns %s",$ns;
       DEBUG "klut.addr: %s",$addr;
+      DEBUG "klut.access: %s # %s %s  %s",encode_uuid($access),kaname($access);
+      DEBUG "klut.key: %s # %s  %s %s",encode_uuid($key),pwname($key);
       DEBUG "saveKLUT(%s): %s => %s",$shard,$token,$cipher;
       my $resp = saveKLUT($shard); # /!\ locally saved on ipfs node
       return $access;
    } elsif (exists $klut->{$shard}) {
+      DEBUG "klut.addr: %s",$addr;
       if (exists $klut->{$shard}{$token}) {
          $cipher = $klut->{$shard}{$token};
       } else {
@@ -71,37 +79,39 @@ sub KLUT { # Ex. my $access = KLUT($seedk,$ns,$addr,[secret]);
       my $default = unpack'H5',substr(KH($seedk,'shard','default'),-4,3);
       $cipher = $klut->{$default}{$tk509} || '3349d37b-bc68-44ff-ad7c-00ffd2843aa3';
    }
-   DEBUG "klut.%s: %s.%s: %s",$shard,$ns,$addr,$cipher;
+   DEBUG "klut.%s: %s: %s",$shard,$addr,$cipher;
    my $access = XOR(decode_uuid($cipher),$key);
    return $access;
 }
 
 sub getKLUT {
    use XKH qw(KH XOR);
-   my $seedk = &ENV(KLUT_ENCRYPTION_SEED => '551162a7-e18c-41a5-8308-e59199baa738');
-   my ($ns,$addr) = (shift,shift);
-   my $shard = unpack'H5',substr(KH($seedk,'shard',$ns,$addr),-4,3);
+   my $seedk64 = &ENV(KLUT_ENCRYPTION_SEED => '551162a7-e18c-41a5-8308-e59199baa738');
+   my $seedk = decode_mbase($seed64);
+   my $addr = shift;
+   my $shard = unpack'H5',substr(KH($seedk,'shard',$addr),-4,3);
    if (! exists $klut->{$shard}) {
       $klut->{$shard} = loadKLUT($shard);
    }
-   my $cipher = $klut->{$shard}{$addr};
-   my $key = KH($seedk,'klut',$ns,$addr);
+   my $cipher = decode_mbase($klut->{$shard}{$addr});
+   my $key = KH($seedk,'klut',$addr);
    my $access = XOR($cipher,$key);
    return $access;
 }
 sub setKLUT {
    use XKH qw(KH XOR);
-   my $seedk = &ENV(KLUT_ENCRYPTION_SEED => '551162a7-e18c-41a5-8308-e59199baa738');
-   my ($ns,$addr,$access) = (shift,shift,pop);
-   my $hash = KH($seedk,'shard',$ns,$addr);
+   my $seedk64 = &ENV(KLUT_ENCRYPTION_SEED => '551162a7-e18c-41a5-8308-e59199baa738');
+   my ($addr,$access) = (shift,pop);
+   my $seedk = decode_mbase($seed64);
+   my $hash = KH($seedk,'shard',$addr);
    my $shard = unpack'H5',substr($hash,-4,3);
    my $token = encode_base32e(substr($hash,12,16));
    if (! exists $klut->{$shard}) {
      $klut->{$shard} = loadKLUT($shard);
    }
-   my $key = KH($seedk,'klut',$ns,$addr);
+   my $key = KH($seedk,'klut',$addr);
    my $cipher = XOR($access,$key);
-   $klut->{$shard}{$token} = $cipher;
+   $klut->{$shard}{$token} = encode_base64($cipher);
    my $resp = saveKLUT($shard); # /!\ locally saved on ipfs node
    return $cipher;
 }
