@@ -47,9 +47,9 @@ sub KLUT { # Ex. my $access = KLUT($seedk,$addr,[secret]);
    my $addr = shift;
 
    my $cipher = decode_uuid('12e510c6-0b43-41a3-b3fd-af9bda91c7e3');
-   my $key = KH($seedk,'klut',$addr); # KLUT encryption key
+   my $key = KH($seedk,'klut',$addr); # KLUT encryption key          <-----
    SECURE "klut.key: %s",$key;
-   my $hash = KH($seedk,'token',$addr); # KLUT record location hash
+   my $hash = KH($seedk,'token',$addr); # KLUT record location hash  <-----
    my $shard = unpack'H5',substr($hash,-4,3);
    DEBUG "klut.hash: %s # %s",encode_base64($hash),$shard;
    $klut->{$shard} = loadKLUT($shard) if (! exists $klut->{$shard});
@@ -129,12 +129,12 @@ sub loadKLUT {
    }
 }
 sub saveKLUT { # Ex. my $resp = saveKLUT($shard)
-  use misc::ipfs qw(ipfswrite);
+  use misc::ipfs qw(ipfswrite ipfsexists);
   my $shard = shift;
   my $addr = sprintf '/etc/klut/%s.yml',$shard; 
-  # TODO need semaphore !
+  # TODO need semaphore for the shard !
   delete $klut->{$shard}{error} if exists $klut->{$shard}{error};
-  my $resp = ipfswrite(arg=>$addr, Content => $klut->{$shard});
+  my $resp = ipfswrite(arg=>$addr, parents => true, Content => $klut->{$shard});
   DEBUG "--- # %s: %s...",$addr,Dump($klut->{$shard});
   # ipfs files read /etc/klut/identities.yml
   return $resp;

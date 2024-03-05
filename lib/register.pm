@@ -5,7 +5,14 @@ package register;
 use Exporter qw(import);
 our @EXPORT_OK = grep { $_ !~ m/^_/ && defined &$_; } keys %{__PACKAGE__ . '::'};
 
+# $Author: michelc $
+# $Created-On: Tue, 2024-02-27 11:34:38 $
+# $Last-Modified: Tue, 2024-02-27 11:35:09 $
+# .-2! echo "\# \$Created-On: $(date -d @$(stat -c \%Y %~1)  +'\%a, \%Y-\%m-\%d \%T') \$"
+# .-2! echo "\# \$Last-Modified: $(date +'\%a, \%Y-\%m-\%d \%T') \$"
+# $! echo "1; \# \$Source: /ipfs/$(ipfs add -n -w % -Q)/%:t \$"
 
+sub OPHI { (sqrt(5) - 1) * 11/13; }
 use kanony;
 use pwned qw(pwname);
 use encode;
@@ -15,60 +22,131 @@ sub DEBUG{};
 sub SECURE{};
 use IDE;
 
-sub register {
+our $cnts = {};
+
+sub OPHI { (sqrt(5) - 1) * 11/13; }
+
+sub sessionKey { # Ex. my $pks = sessionKey($name,$sessionid,$entropy,'uuid' => $uuid);
+   use XKH qw(KH);
+   use ECC qw(EC);
+   use uuid qw(getUUID);
+   my ($name,$sessionid,$entropy,$args) = args([qw(name sessionid entropy)],@_);
+   # note: entropy not used !
+   my $uuid = $args->{uuid} || 'af7d2ad1-2888-4d3b-a2f9-4d3075462ae9';
+
+   my $weekly = int $^T/3600/24/7 * OPHI;
+   $sessionid //= $args->{sessionid} || $weekly;
+   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f',undef, $sessionid // 1686197);
+   my $seedr = decode_mbase($seedr64);
+   my $sks = KH($seedr,$uuid,$name,$sessionid);
+   my $pks = EC($sks);
+   return wantarray ? ( sessionid => $sessionid, uuid => $uuid,  private => encode_mbase58($sks), public => encode_mbase58($pks) ) : $pks;
+}
+
+
+sub register { # Ex. my $cipher = register($name,$passcode,"entropy for $name ". &ENV('$'), mnemo => 'special account', uuid => $uuid );
+   use KDF;
+   use uuid qw(getUUID);
    use KLUT;
-   use XKH qw(KH DH KM);
-   my ($name,$passcode,$mnemo,$args) = args([qw(name passcode mnemo)],@_);
-   my $regkey = KDF($name,$passcode,$mnemo); # /!\ make sure $name + $mnemo are unique
+   use XKH qw(KM XOR);
+   my ($name,$passcode,$entropy,$args) = args([qw(name passcode entropy)],@_);
+   my $regkey = KDF($name,$passcode,$args->{mnemo}//$entropy); # /!\ make sure $name + $mnemo are unique
    my $regkey64  = encode_base64($regkey);
-   DEBUG "register.regkey64: %s # %s  %s %s",$regkey64,&pwname($regkey);
+   DEBUG "regkey64: %s # %s  %s %s",$regkey64,&pwname($regkey);
 
-   my $reginfo = { getRegId($name,$passcode,$mnemo, key => $regkey) };
-   my $regid = decode_uuid($reginfo->{reguuid});
-   # get pku to get session key...
-   my $pku58 = $args->{pubkey} || 'ZV4Ex2PY371cXKGw12ZBsyXcUbaY1UziDVroGaVn6TgHd' || 'Z223CLvvTBagprnX1aZq2AuR5cVVd7VkfbfnnoBy5HAr3G';
-   my $pku = decode_mbase58($pku58);
+   # -------------------------------------------------------------
+   my $uid = exists $args->{uuid} ? decode_uuid($args->{uuid}) : getUUID($name,$passcode,$entropy, comment => "uuid for $name");
+   my $pki = pubKeyOf($uid,undef,$args->{cnt});
+   # -------------------------------------------------------------
+
+
+   my $weekly = int $^T/3600/24/7 * OPHI;
+   my $sessionid = $args->{sessionid} || $weekly;
+   DEBUG "sessionid: %s",$sessionid;
+
+   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f',undef, $sessionid // 1686197);
+   my $seedr = decode_mbase($seedr64);
+   my $seedk = KM($seedr,'seed',$entropy,$regkey); # key to protect KLUT
+   DEBUG "regkey: %s",unpack'H*',$regkey;
+   my $cipher = XOR($uid,$regkey);
+   DEBUG "cipher: %s",unpack'H*',$cipher;
+   # KLUT write ...
+   my $access = KLUT($seedk,'uuid:'.$regkey64,$cipher);
+   DEBUG "access: %s",unpack'H*',$access;
+   return wantarray ? (access => $access, pubkey => encode_base58($pki) ) : $access ;
    
+}
+
+sub updRegistry {
+   my ($regkey1,$regkey2,$nonce1,$nonce2) = @_;
+   $nonce1 //= decode_uuid('06443b17-cb1a-4fe3-be2a-9d23e5322384');
+   $nonce2 //= $nonce1; 
+   my $value = getRegistry($nonce1,$regkey1);
+   my $cipher = setRegistry($nonce2,$regkey2,$value);
+   setRegistry($nonce,$regkey1,$revoked);
+   return $cipher;
+}
 
 
-   my $weekly = int $tofu/3600/24/7 * OPHI;
+sub getIdentity {
+   my ($name,$passcode,$entropy,$args) = args([qw(name passcode entropy)],@_);
+   my $regkey = getRegKey(@_); # uses mnemo if defined
+   my $regkey64  = encode_base64($regkey);
+
+   my $weekly = int $^T/3600/24/7 * OPHI;
    my $sessionid = $args->{sessionid} || $weekly;
 
-   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f', 1686197);
+   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f', undef, $sessionid // 1686197);
    my $seedr = decode_mbase($seedr64);
+   my $seedk = KM($seedr,'seed',$entropy,$regkey); # key to protect KLUT
 
-   DEBUG "pku: %s",$args->{pubkey};
-   my $seedk = KM($seedr,'seed',$pku); # to protect KLUT
-   my $access = KLUT($seedk,'regid:'.$regkey64,$regid);
-   return $access;
-   
+   use XKH qw(XOR);
+   my $cipher = KLUT($seedk,'uuid:'.$regkey64);
+   my $uuid = XOR($cipher,$regkey);
+   DEBUG "identity.uuid: %s # %s %s  %s",encode_uuid($uuid),kaname($uuid);
+   my $pki = pubKeyOf($uuid,undef,$args->{cnt});
+   return wantarray ? ( pki => encode_mbase58($pki), uuid => encode_uuid($uuid), regkey => encode_base64($regkey) ) : $pki;
 }
-sub getRegistry {
-   my ($name,$passcode,$mnemo,$args) = args([qw(name passcode mnemo)],@_);
-   my $regkey = KDF($name,$passcode,$mnemo); # /!\ make sure $name + $mnemo are unique
+
+sub getRegistry { # Ex. my $cipher = getRegistry($key,$nonce,'uuid');
+   my ($regkey,$nonce,$args) = args([qw(regkey nonce)],@_);
    my $regkey64  = encode_base64($regkey);
 
-   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f', 1686197);
+   my $weekly = int ($^T//$args->{tofu}//$args->{tstamp})/3600/24/7 * OPHI;
+   my $sessionid = $args->{sessionid} || $weekly;
+
+   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f', undef, $sessionid // 1686197);
    my $seedr = decode_mbase($seedr64);
-   DEBUG "pku: %s",$args->{pubkey};
-   my $seedk = KM($seedr,'seed',decode_mbase58($args->{pubkey})); # to protect KLUT
+   my $seedk = KM($seedr,'seed',$nonce,$regkey); # key to protect KLUT
 
-   my $regid = KLUT($seedk,'regid:'.$regkey64);
-   use XKH qw(XOR);
-   my $uuid = XOR($regid,$regkey);
-   DEBUG "uuid: %s # %s %s  %s",encode_uuid($uuid),kaname($uuid);
-   my $pki = pubKeyOf($uuid);
-   DEBUG "pki: %s # %s %s  %s",encode_mbase58($pki),kaname($pki);
-
-   return $regid;
+   my $cipher = KLUT($seedk,join':',@_,$regkey64);
+   DEBUG "cipher: %s # %s %s  %s",encode_uuid($cipher),kaname($cipher);
+   return $cipher;
 }
+sub setRegistry { # Ex. undef = getRegistry($key,$nonce,'uuid',$cipher);
+   my ($regkey,$nonce,$cipher,$args) = args([qw(regkey nonce cipher)],@_);
+   my $regkey64  = encode_base64($regkey);
+   my $weekly = int ($^T//$args->{tofu}//$args->{tstamp})/3600/24/7 * OPHI;
+   my $sessionid = $args->{sessionid} || $weekly;
+
+   my $seedr64 = &ENV('REGISTRATION_SEED' => '0fd406ae-a99c-4c82-8102-6b1cb449186f', undef, $sessionid // 1686197);
+   my $seedr = decode_mbase($seedr64);
+   my $seedk = KM($seedr,'seed',$nonce,$regkey); # key to protect KLUT
+
+   my $returned = KLUT($seedk,join(':',@_,$regkey64),$cipher);
+   DEBUG "cipher: %s # %s %s  %s (registered)",encode_uuid($returned),kaname($returned);
+   return (defined wantarray) ? $returned : undef;
+}
+
+
+
 sub getRegKey { # Ex. my $regkey = getRegId($name,$secret,$URI, access => $access);
     use KDF;
     use misc qw(args);
-    my ($name,$secret,$mnemo,$args) = args([qw(name secret mnemo)],@_);
-    my $regkey = KDF($name,$secret,$mnemo); # /!\ make sure $name + $mnemo are unique
+   my ($name,$passcode,$entropy,$args) = args([qw(name passcode entropy)],@_);
+   my $regkey = KDF($name,$passcode,$args->{mnemo}//$entropy); # /!\ make sure $name + $mnemo are unique
     my $regkey64  = encode_base64($regkey);
-    DEBUG "regKey64: %s # %s  %s %s for %s %s",$regkey64,pwname($regkey),$name,$mnemo;
+    DEBUG "regKey64: %s # %s  %s %s for %s %s",$regkey64,pwname($regkey),$name,$args->{mnemo};
     return $regkey;
 }
 
@@ -110,35 +188,22 @@ sub getRegId { # Ex. my $reginfo = getRegId($name,$secret,$URI);
 
 }
 
-sub pubKeyOf {
+sub pubKeyOf { # uuid_raw -> pubKey
   use env qw(ENV);
   use ECC qw(EC);
   use XKH qw(KH);
   my $uuid = $_[0]; delete $_[0] && shift;
-  my $seedi58 = ENV('SECRET_PRIVATE_KEY' => '21c01ac5-3174-4217-9059-1b2b0e426932');
+  my $seedi58 = ENV('SECRET_PRIVATE_KEY' => '21c01ac5-3174-4217-9059-1b2b0e426932',@_);
   my $seedi = decode_mbase($seedi58);
   my $privkey = KH($seedi,$uuid,$VERSION,substr($uuid,-1));
   SECURE "privkey: %s",$privkey;
   my $pubkey = EC($privkey);
+  DEBUG "pubkey: %s # %s  %s %s",encode_mbase58($pubkey),&kaname($pubkey);
   return wantarray ? (public  => encode_mbase58($pubkey), private => encode_mbase58($privkey), seedi => $seedi58) : $pubkey;
 }
 
 
- sub getSpotByKey { # Ex. my $spot = getSpot($key,$env);
-    use spots;
-    my $spot64;
-    my $key64 = encode_base64(shift);
-    if (exists $spots->{$key64}) {
-      $spot64 = $spots->{$key64};
-    } else {
-      my $ip = &spots::get_ip(@_);
-      $spot64 = $spots->{$key64} = encode_spot($ip,time);
-      &spots::saveSpots();
-    }
-    my ($loc,$tic) = &encode::decode_spot(decode_base64($spot64));
-    DEBUG "spot: %s # %s \@ %s",$spot64,$loc,&wdate($tic);
-    return $spot64
- }
+
 
  sub encode_spot { # Ex. my $spot64 = &get_spot($ip,$tics); # spacetime format
   my ($dotip,$tics) = @_;
@@ -161,4 +226,4 @@ sub pubKeyOf {
     return $tofu
  }
 
-1;
+1; # $Source: /ipfs/QmYyU1Zy7CAndWnKA28xhcjMKeyz2ZFPgxyghCFPB9ViVF/register.pm $
