@@ -1,0 +1,11 @@
+[A-Z]* filter=git-crypt diff=git-crypt
+*env* filter=git-crypt diff=git-crypt
+*clear* filter=git-crypt diff=git-crypt
+*p*ss* filter=git-crypt diff=git-crypt
+*jwt* filter=git-crypt diff=git-crypt
+*sec* filter=git-crypt diff=git-crypt
+*key* filter=git-crypt diff=git-crypt
+secrets/** filter=git-crypt diff=git-crypt
+*sight* filter=git-crypt diff=git-crypt
+.gitattributes !filter !diff
+*.asc !filter !diff

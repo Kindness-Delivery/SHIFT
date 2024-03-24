@@ -171,11 +171,12 @@ sub getRegId { # Ex. my $reginfo = getRegId($name,$secret,$URI);
  }
 
  sub pubKeyOfAuth {
+  use DH3 qw(pubKeyOf);
   use ECC qw(EC);
   my ($name,$passcode,$realm,$devuid,$args) = args([qw(name passcode realm devuid)],@_);
   my $auth64 = encode_base64(join':',$name,$passcode,$realm);
      $devuid = decode_uuid( ${devuid} || 'b75eefdb-ac81-4a73-ab88-3d63017bcc73' );
-  my $deviceid = pubKeyOf($devuid);
+  my $deviceid = encode_base58(pubKeyOf($devuid));
   my $regid = decode_uuid( $args->{regid} // '46cbd7ef-02bb-4ba9-8f40-a6cf021f4c1d' );
 
   my $cnt = $args->{cnt} // $cnts->{$regid} // 0;; # <--
@@ -187,22 +188,6 @@ sub getRegId { # Ex. my $reginfo = getRegId($name,$secret,$URI);
   return wantarray ? (public  => $pku58, private => $sku58, deviceid => $deviceid) : $pku;
 
 }
-
-sub pubKeyOf { # uuid_raw -> pubKey
-  use env qw(ENV);
-  use ECC qw(EC);
-  use XKH qw(KH);
-  my $uuid = $_[0]; delete $_[0] && shift;
-  my $seedi58 = ENV('SECRET_PRIVATE_KEY' => '21c01ac5-3174-4217-9059-1b2b0e426932',@_);
-  my $seedi = decode_mbase($seedi58);
-  my $privkey = KH($seedi,$uuid,$VERSION,substr($uuid,-1));
-  SECURE "privkey: %s",$privkey;
-  my $pubkey = EC($privkey);
-  DEBUG "pubkey: %s # %s  %s %s",encode_mbase58($pubkey),&kaname($pubkey);
-  return wantarray ? (public  => encode_mbase58($pubkey), private => encode_mbase58($privkey), seedi => $seedi58) : $pubkey;
-}
-
-
 
 
  sub encode_spot { # Ex. my $spot64 = &get_spot($ip,$tics); # spacetime format
