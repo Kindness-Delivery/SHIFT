@@ -10,28 +10,32 @@ our @ISA = qw(Crypt::Digest);
 
 use lib $ENV{RADIANT}.'/lib';
 sub DEBUG {};
-use IDE; our $exclude = [94];
+use IDE; our $exclude = [82,84,88,89,90,98,104,108,116,120];
 
 if (__FILE__ eq $0) {
    my $seed = pack'H32','750b7925-873c-4d2e-9bc0-a151368df700' =~ tr/-//dr;
-   my $pass = 'secret password';
+   my $pass = ask_pass('rainbowsecret','rainbow passcode');
    my $mod = 32749 || 16381 || 8171;
    my $unhash = unhash->new($seed,$pass,$mod);
    printf "mod: %s\n",$unhash->{'mod'};
-   printf "pass: %s\n",$unhash->{'pass'};
    printf "seed: %s\n",encode_uuid($unhash->{'seed'});
    my $test = $unhash->{ini}->clone();
    DEBUG "test: %s",$test->hexdigest();
-   #DEBUG "--- # new: %s---",Dump($unhash);
+   my $r = 0;
+   while (1) {
+      $r++;
+      my $xm = int(rand$mod);
+      next if (exists $unhash->{cache}{$xm});
+      my $p = int(rand$mod);
 
-   my $xm = int(rand$mod);
-   my $p = int(rand$mod);
-
-   my $n = $unhash->unhash($p,$xm);
-   my $q = unpack'V',KH($seed,$pass,$n) ;
-   my $m = $q % $mod;
-   DEBUG "// (h(n:%10d)=%10d) %% %d = %4d =? %4d",$n,$q,$mod,$m,$xm;
-   die if $m != $xm;
+      my $n = $unhash->unhash($p,$xm);
+      my $j = $unhash->size();
+      my $q = unpack'V',KH($seed,$pass,$n) ;
+      my $m = $q % $mod;
+      DEBUG "%-5s (hash(n=%10d)=q=%10d) %% %d = %5d =? %-5d; j=%s",$r,$n,$q,$mod,$m,$xm,$j;
+      die if $m != $xm;
+      last if $j >= $mod;
+   }
 
    exit $?;
 
@@ -65,6 +69,11 @@ sub new {
     return $self;
 }
 
+sub size {
+  my $self = shift;
+  return scalar keys %{$self->{cache}};
+}
+
 sub unhash { # Ex. my $p = $unhash->unhash($expected);
   my ($self,$iv,$x) = @_;
   $x //= $$ % $self->{mod}; # expected hash value
@@ -83,6 +92,7 @@ sub unhash { # Ex. my $p = $unhash->unhash($expected);
   my ($i,$j) = (0,0);  # total iteration, found matches
   my $n = $iv //= rand($mod); # IV (head)
   my $p = $iv; 
+  my $nmax= 10 * $mod;
   my %seen = ();
   # ∀ m ∈ [0,mod[ ∃ p / h(p)%mod = m
   DEBUG decode('UTF-8',"∀ m=%d ∈ [0,mod[ ∃ p / h(p)%%%d = m"),$x,$self->{mod};
@@ -102,12 +112,19 @@ sub unhash { # Ex. my $p = $unhash->unhash($expected);
         $seen{$n} = $p;
      } else {
         while($seen{$n}) { $n++; }
+        last if scalar keys %seen > $nmax;
+        DEBUG "m = %s; n=%s",$m,$n;
      }
      $p = $n; $i++;
   }
   DEBUG decode('UTF-8'," i:%6d,j:%5d, x=%5d ⟼  p=%11d, n:%10d / KH(...,n) = x"),$i,$j,$x,$p,$n;
   return $unhash->{$m} // $p;
 
+}
+sub ask_pass {
+   open ASK,sprintf'/usr/bin/systemd-ask-password --keyname="%s" --accept-cached "%s"|',shift,shift//'passcode';
+   chomp(my $pass = <ASK>);
+   return $pass;
 }
 
 sub encode_uuid {
